@@ -1,0 +1,19 @@
+{
+  "name": "zgovproposal-api",
+  "version": "1.0.0",
+  "description": "Simple api rest for proposal app.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apollomatheus/proposal-api.git"
+  },
+  "author": "Matheus",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/apollomatheus/proposal-api/issues"
+  },
+  "homepage": "https://github.com/apollomatheus/proposal-api#readme"
+}
