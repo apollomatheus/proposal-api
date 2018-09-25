@@ -1,7 +1,7 @@
 const config = {
     host: 'localhost:27017',
-    user: 'proposalApi',
-    password: 'proposalApi',
+    user: 'papi',
+    password: 'papi',
     database: 'proposalApi',
     url () {
         return 'mongodb://'+this.user+':'+this.password+'@'+this.host+'/'+this.database;

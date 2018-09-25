@@ -4,7 +4,8 @@
   "description": "Simple api rest for proposal app.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "nodemon index.js",
+    "test": "nodemon test.js"
   },
   "repository": {
     "type": "git",
@@ -15,5 +16,16 @@
   "bugs": {
     "url": "https://github.com/apollomatheus/proposal-api/issues"
   },
-  "homepage": "https://github.com/apollomatheus/proposal-api#readme"
+  "homepage": "https://github.com/apollomatheus/proposal-api#readme",
+  "dependencies": {
+    "mongodb": "^2.2.36"
+  },
+  "devDependencies": {
+    "axios": "^0.18.0",
+    "babel": "^6.23.0",
+    "body-parser": "^1.18.3",
+    "crypto": "^1.0.1",
+    "express": "^4.16.3",
+    "nodemon": "^1.18.4"
+  }
 }
