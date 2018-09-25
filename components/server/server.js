@@ -1,5 +1,7 @@
+var cors = require('cors');
 
 module.exports = function(app, database){
+    app.use(cors({origin: '*'}));
 
     app.get('/proposals', (req,res) => {
         res.send({

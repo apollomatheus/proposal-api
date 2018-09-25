@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/apollomatheus/proposal-api#readme",
   "dependencies": {
+    "cors": "^2.8.4",
     "mongodb": "^2.2.36"
   },
   "devDependencies": {
