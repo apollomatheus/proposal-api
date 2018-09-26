@@ -10,7 +10,6 @@ var rpc = {
     host: 'http://127.0.0.1:51314',
 };
 
-var proposals = [];
 
 class CTaskHandler {
     constructor(name,init) {
@@ -144,36 +143,36 @@ function newRequest(options,callback) {
     }
 }
 
-function storeProposal(database) {
-    console.log('Storing proposals! (',proposals.length,')');
-    var c = database.collection('proposals');
-    //add items
-    for (let i = 0; i < proposals.length; i++) {
-        c.insertOne(proposals[i], (err, res)=> {
-            if (err) throw err;
-            console.log('OK!');
-        });
-    }
+
+function storeStatus(database,status) {
+    console.log('Storing status!');
+    var c = database.collection('status');
+    c.insertOne(status, (err, res) => {
+        if (err) throw err;
+        console.log('OK!');
+    });
 }
 
-function saveProposals() {
+function saveStatus(status) {
+    if (!status) return;
     try {
         MongoClient.connect(config.host, { useNewUrlParser: true }, (err, client) => {
             if (err) throw err;
 
             var database = client.db(config.database);
             console.log('Database connected!');
-            database.collection('proposals',(err,c)=> {
+
+            database.collection('status',(err,c) => {
                 c.find().count((err,n) => {
                     if (n > 0) { //clean collection
-                        database.dropCollection('proposals', function(err, delOK) { 
+                        database.dropCollection('status', function(err, delOK) { 
                             if (err) throw err;
                             console.log('Collection cleaned!');
-                            storeProposal(database);
+                            storeStatus(database,status);
                             client.close();
                         });
                     } else {
-                        storeProposal(database);
+                        storeStatus(database,status);
                         client.close();
                     }
                 });
@@ -184,47 +183,86 @@ function saveProposals() {
     }
 }
 
-function masternodeCount() {
+/* Get days in month */
+function daysInMonth (month, year) {
+    return new Date(year, month, 0).getDate();
+}
+
+/* Calculate day span between two dates */
+function daySpan(dateA,dateB) {
+    var days = 0;
+    var today = new Date();
+    for (var y = dateA.getFullYear(); y < dateB.getFullYear()+1; y++) {
+        for (var m = dateA.getMonth(); m < dateB.getMonth()+1; m++) {
+            var d = daysInMonth(m,y);
+            var dm = (today.getMonth() == m) ? d-today.getDate() : d;
+            var dmB = (dateB.getMonth() == m) ? dateB.getDate() : dm;
+            days += dmB;
+        }
+    }
+    return days;
+}
+
+function budgetRequest() {
     return 100;
 }
 
-function organizeProposal(value) {
-    var ds_ = JSON.parse(value.DataString);
-    var ds = ds_[0][1];
-    var mc = masternodeCount();
-    var p = {
-        hash: value.Hash,
-        name: ds.name,
-        url: ds.url,
-        address: ds.payment_address,
-        paid: 0,
-        totalPayment: 1,
-        availablePayment: 1,
-        requestPayment: ds.payment_amount,
-        masternodesEnabled: mc,
-        voteYes: value.YesCount,
-        voteNo: value.NoCount,
-        voteAbs: value.AbstainCount,
-        funding: value.fCachedFunding,
-        deleted: value.fCachedDelete,
-        start: ds.start_epoch,
-        end: ds.end_epoch,
-    };
-    return p;
+function budgetPassing() {
+    var passing = 100;
+    var insufficient = 10;
+    return { passing, insufficient };
+}
+
+function budgetAllocation() {
+    var superblockRwd = ((20160*10) * 0.10);
+    var passing = budgetPassing();
+    var requested = budgetRequest();
+    var available = superblockRwd - requested;
+    return { proposal: passing, requested, available, allocated: 100, unallocated: 10 };
+}
+
+function calcNextSuperblock(actualBlock,next) {
+    var diffblock = next-actualBlock;//eg: 100-10 = 90
+    var secs = Math.round(diffblock*90);//eg: block/sec
+    var nextts = new Date();
+    nextts.setTime(((nextts.getTime()/1000)+secs)*1000);
+    return nextts;
+}
+
+//deadline - days
+//masternodes - count
+function organizeStatus(actualBlock,next) {
+    var today = new Date();
+    var date = calcNextSuperblock(actualBlock,next);
+    var budget = budgetAllocation();
+    
+    var dayspan = daySpan(today,date)-1;
+    return {
+        day: date.getDate(),
+        month: date.getMonth()+1,
+        year: date.getFullYear(),
+        deadline: dayspan,//days
+        masternodes: 100,
+        budget };
 }
 
 function getProposals() {
     
-    console.log('Getting proposals from RPC...');
+    console.log('Getting status from RPC...');
 
-    newRequest(rpcOptions('gobject',['list']), (result) => {
-        console.log('Got result !');
-        var list = result.result;
-        for (var hash in list) {
-            var p = organizeProposal(list[hash]);
-            proposals.push(p);
-        }
-        saveProposals();
+    newRequest(rpcOptions('getgovernanceinfo',[]), (result) => {
+        console.log('Got result ! (getgovernanceinfo)');
+        var info = result.result;
+        var nextSuperBlock = info.nextsuperblock;
+
+        newRequest(rpcOptions('getinfo',[]), (result) => {
+            var info2 = result.result;
+            var actualBlock = info2.blocks;
+
+            var status = organizeStatus(actualBlock, nextSuperBlock);
+            saveStatus(status);
+        });
+
     });
 }
 

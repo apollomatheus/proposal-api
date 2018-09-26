@@ -19,7 +19,7 @@
   "homepage": "https://github.com/apollomatheus/proposal-api#readme",
   "dependencies": {
     "cors": "^2.8.4",
-    "mongodb": "^2.2.36"
+    "mongodb": "^3.0.0-rc0"
   },
   "devDependencies": {
     "axios": "^0.18.0",

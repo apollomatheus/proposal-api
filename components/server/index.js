@@ -1,5 +1,5 @@
 const server = require('./server');
 
-module.exports = function(app, database) {
-    server(app, database);
+module.exports = function(app, database,db) {
+    server(app, database,db);
 };

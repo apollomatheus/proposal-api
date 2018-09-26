@@ -11,7 +11,7 @@ db.Connect((result)=>{
     try {
         if (result.error) throw result.error;
 
-        server(app, result.result);
+        server(app, result.result, db);
         app.listen(port, () => {
           console.log('We are live on ' + port);
         });
