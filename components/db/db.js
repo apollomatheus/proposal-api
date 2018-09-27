@@ -26,29 +26,6 @@ const db = {
             }
         },300));
     },
-    /*status: {
-        deadline: 5,
-        masternodes: 120,
-        amount: {
-          available: 2048,
-          requested: 110,
-          allocated: 100,
-          unallocated: 1948,
-        },
-        proposal: {
-          passing: 2,
-          insufficient: 1,
-        }
-        
-         return {
-        day: date.getDate(),
-        month: date.getMonth()+1,
-        year: date.getFullYear(),
-        deadline: dayspan,//days
-        masternodes: 100,
-        budget };
-        
-        */
     GetStatus(database,cb) {
         try {
             var cl = database.collection('status');

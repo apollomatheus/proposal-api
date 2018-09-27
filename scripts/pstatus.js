@@ -5,8 +5,8 @@ const MongoClient    = require('mongodb').MongoClient;
 const config = require('../components/config');
 
 var rpc = {
-    user: 'rpc000u1',
-    password: 'rpc000u2',
+    user: 'rpczzz',
+    password: 'rpczzz',
     host: 'http://127.0.0.1:51314',
 };
 
@@ -218,6 +218,7 @@ function budgetAllocation() {
     var passing = budgetPassing();
     var requested = budgetRequest();
     var available = superblockRwd - requested;
+    console.log(available);
     return { proposal: passing, requested, available, allocated: 100, unallocated: 10 };
 }
 
@@ -229,8 +230,6 @@ function calcNextSuperblock(actualBlock,next) {
     return nextts;
 }
 
-//deadline - days
-//masternodes - count
 function organizeStatus(actualBlock,next) {
     var today = new Date();
     var date = calcNextSuperblock(actualBlock,next);
@@ -246,7 +245,7 @@ function organizeStatus(actualBlock,next) {
         budget };
 }
 
-function getProposals() {
+function getStatus() {
     
     console.log('Getting status from RPC...');
 
@@ -267,4 +266,4 @@ function getProposals() {
 }
 
 //--init
-getProposals();
+getStatus();
