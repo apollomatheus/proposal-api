@@ -1,166 +1,15 @@
 'use strict';
 
-const MongoClient    = require('mongodb').MongoClient;
 const config = require('../components/config');
 const CTaskHandler = require('./utils/tasks').CTaskHandler;
 const CRPC = require('./utils/rpc').CRPC;
-
-const TaskHandler = new CTaskHandler('taskhandler');
-const RPCHandler = [];
+const CMongo    = require('./utils/mongo').CMongo;
 
 var rpc = {
     user: 'rpczzz',
     password: 'rpczzz',
     host: 'http://127.0.0.1:51314',
 };
-
-function DoRPC(method,params,events,callback) {
-    let options = {
-        url: rpc.host,
-        method: "post",
-        headers:
-        {
-         "content-type": "text/plain"
-        },
-        auth: {
-            user: rpc.user,
-            pass: rpc.password
-        },
-        body: JSON.stringify( {"jsonrpc": "1.0", "id": "curltest", "method": method, "params": params })
-    };
-
-    RPCHandler.push(new CRPC({
-        request: options,
-        events,
-        tasks: TaskHandler,
-        callback,
-    }));
-}
-
-/*
-function storeStatus(database,status) {
-    console.log('Storing status!');
-    var c = database.collection('status');
-    c.insertOne(status, (err, res) => {
-        if (err) throw err;
-        console.log('OK!');
-    });
-}
-
-function saveStatus(status) {
-    if (!status) return;
-    try {
-        MongoClient.connect(config.host, { useNewUrlParser: true }, (err, client) => {
-            if (err) throw err;
-
-            var database = client.db(config.database);
-            console.log('Database connected!');
-
-            database.collection('status',(err,c) => {
-                c.find().count((err,n) => {
-                    if (n > 0) { //clean collection
-                        database.dropCollection('status', function(err, delOK) { 
-                            if (err) throw err;
-                            console.log('Collection cleaned!');
-                            storeStatus(database,status);
-                            client.close();
-                        });
-                    } else {
-                        storeStatus(database,status);
-                        client.close();
-                    }
-                });
-            });
-        });
-    } catch(err) {
-        console.log('MongoDB: Failed to connect!');
-    }
-}
-
-/* Get days in month 
-function daysInMonth (month, year) {
-    return new Date(year, month, 0).getDate();
-}
-
-/* Calculate day span between two dates 
-function daySpan(dateA,dateB) {
-    var days = 0;
-    var today = new Date();
-    for (var y = dateA.getFullYear(); y < dateB.getFullYear()+1; y++) {
-        for (var m = dateA.getMonth(); m < dateB.getMonth()+1; m++) {
-            var d = daysInMonth(m,y);
-            var dm = (today.getMonth() == m) ? d-today.getDate() : d;
-            var dmB = (dateB.getMonth() == m) ? dateB.getDate() : dm;
-            days += dmB;
-        }
-    }
-    return days;
-}
-
-function budgetRequest() {
-    return 100;
-}
-
-function budgetPassing() {
-    var passing = 100;
-    var insufficient = 10;
-    return { passing, insufficient };
-}
-
-function budgetAllocation() {
-    var superblockRwd = ((20160*10) * 0.10);
-    var passing = budgetPassing();
-    var requested = budgetRequest();
-    var available = superblockRwd - requested;
-    console.log(available);
-    return { proposal: passing, requested, available, allocated: 100, unallocated: 10 };
-}
-
-function calcNextSuperblock(actualBlock,next) {
-    var diffblock = next-actualBlock;//eg: 100-10 = 90
-    var secs = Math.round(diffblock*90);//eg: block/sec
-    var nextts = new Date();
-    nextts.setTime(((nextts.getTime()/1000)+secs)*1000);
-    return nextts;
-}
-
-function organizeStatus(actualBlock,next) {
-    var today = new Date();
-    var date = calcNextSuperblock(actualBlock,next);
-    var budget = budgetAllocation();
-    
-    var dayspan = daySpan(today,date)-1;
-    return {
-        day: date.getDate(),
-        month: date.getMonth()+1,
-        year: date.getFullYear(),
-        deadline: dayspan,//days
-        masternodes: 100,
-        budget };
-}
-
-function getStatus() {
-    
-    console.log('Getting status from RPC...');
-
-    newRequest(rpcOptions('getgovernanceinfo',[]), (result) => {
-        console.log('Got result ! (getgovernanceinfo)');
-        var info = result.result;
-        var nextSuperBlock = info.nextsuperblock;
-
-        newRequest(rpcOptions('getinfo',[]), (result) => {
-            var info2 = result.result;
-            var actualBlock = info2.blocks;
-
-            var status = organizeStatus(actualBlock, nextSuperBlock);
-            saveStatus(status);
-        });
-
-    });
-}
-
-//--init
-getStatus();*/
 
 const status = {
     deadline: -1,
@@ -192,14 +41,86 @@ const status = {
 };
 
 var board = {
-    date: false,
-    budget: false,
-    proposal: false,
-    superblock: false
+    date: null,
+    budget: null,
+    proposal: null,
+    superblock: null
 };
+
+const TaskHandler = new CTaskHandler('taskhandler');
+const Tasks = [];
 
 var today = new Date();
 var commonSuperblockInterval = DayTimeSpan(today, DateIncreased(today,(20160*90)));
+
+function DoRPC(method,params,events,callback) {
+    let options = {
+        url: rpc.host,
+        method: "post",
+        headers:
+        {
+         "content-type": "text/plain"
+        },
+        auth: {
+            user: rpc.user,
+            pass: rpc.password
+        },
+        body: JSON.stringify( {"jsonrpc": "1.0", "id": "curltest", "method": method, "params": params })
+    };
+
+    Tasks.push(new CRPC({
+        request: options,
+        events,
+        tasks: TaskHandler,
+        callback,
+    }));
+}
+
+function DoMongo(db,events) {
+    Tasks.push(new CMongo({
+        db,
+        events
+    }));
+}
+
+function StoreStatus(database) {
+    console.log('~~: Storing status!');
+    var c = database.collection('status');
+    c.insertOne(status, (err, res) => {
+        if (err) throw err;
+        console.log('~~: Stored!');
+    });
+}
+
+function SaveStatus() {
+    try {
+        console.log('Saving status...');
+        DoMongo(config, {
+            onDatabase(v) {
+                v.database.collection('status',(e,c)=>{
+                    c.find().count((e,n)=>{
+                        if (n > 0) {
+                            v.database.dropCollection('status', function(err, ok) { 
+                                if (err) throw err;
+                                if (ok) {
+                                    console.log('~~: Collection cleaned!');
+                                    StoreStatus(v.database);
+                                }
+                                v.client.close();
+                            });
+                        } else {
+                            console.log('~~: No clean needed!');
+                            StoreStatus(v.database);
+                            v.client.close();
+                        }
+                    })
+                })
+            }
+        });
+    } catch(err) {
+        console.log('MongoDB: Failed to connect!');
+    }
+}
 
 function DateIncreased(date,sec) {
    date.setTime(((date.getTime()/1000)+sec)*1000);
@@ -316,17 +237,21 @@ DoRPC('getinfo',[],{
                     status.superblock.next = v.result.nextsuperblock;
                     status.superblock.last = v.result.lastsuperblock;
                     CalculateNextSupertblock();
-                    board.superblock = true;
-                    board.date = true;
+                    board.superblock = 'ok';
+                    board.date = 'ok';
                 },
                 onError(e) {
                     console.log('Got error for governance info!');
+                    board.superblock = 'error';
+                    board.date = 'error';
                 }
             }) 
         }
     },
     onError(e) {
         console.log('Failed to get wallet info.');
+        board.superblock = 'error';
+        board.date = 'error';
     }
 });
 
@@ -374,24 +299,36 @@ DoRPC('masternode',['count'],{
                 status.proposal.passing = passing;
                 status.proposal.insufficient = insufficient;
 
-                board.proposal = true;
-                board.budget = true;
+                board.proposal = 'ok';
+                board.budget = 'ok';
             },
             onError(e) {
                 console.log('Got error for proposals info!');
+                board.proposal = 'error';
+                board.budget = 'error';
             }
         });
     },
     onError(e) {
         console.log('Got error for masternode info!');
+        board.proposal = 'error';
+        board.budget = 'error';
     }
 });
 
 
 var watch = setInterval(()=>{
     if (board.date && board.budget && board.proposal && board.superblock) {
-        console.log('Task ended!');
-        console.log(status);
+        if (board.date == 'ok' && board.budget == 'ok' && 
+            board.proposal == 'ok' && board.superblock == 'ok') {
+            SaveStatus();
+        }
         clearInterval(watch);
     }
-});
+    
+    if (board.date == 'error' || board.budget == 'error' || 
+        board.proposal == 'error' || board.superblock == 'error') {
+        console.log('Exit with error');
+        clearInterval(watch);
+    }
+},100);

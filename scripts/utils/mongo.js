@@ -1,9 +1,9 @@
 'use strict';
 
 const CTaskHandler = require('./tasks').CTaskHandler
-const request = require('request')
+const MongoClient    = require('mongodb').MongoClient;
 
-class CRPC {
+class CMongo {
     constructor(options,callback) {
         this._tasks = [];
         this._taskHandle = (options.tasks) ? options.tasks : new CTaskHandler('taskhandler');
@@ -27,31 +27,31 @@ class CRPC {
     }
 
     //call http rpc as task
-    __http(options,task) {
+    __connect(options,events) {
 
         //for now, our task validate request result
         var tasknum = this.__$newTask((self,vtask)=>{
-            var a = self.HasEvent(vtask.taskNum, 'ready');
+            var a = self.HasEvent(vtask.taskNum, 'client');
             var b = self.HasEvent(vtask.taskNum, 'error');
             if (a || b) return true; //finish
             return false; //continue
         });
         
         //listen to task pulses&events
-        if (task) this.__$listenTask(tasknum, task);
+        if (events) this.__$listenTask(tasknum, events);
 
-        //handle request
-        request(options.request, (error,response, body) => {
-            if (error) {
-                this._taskHandle.Event(tasknum, 'error', error);
-            } else if (response) {
-                if (response.statusCode != 200)  {
-                    this._taskHandle.Event(tasknum, 'error', 'Got error status from RPC.');
+        //handle connection
+        MongoClient.connect(options.db.host, { useNewUrlParser: true }, (err, client) => {
+            if (err) {
+                this._taskHandle.Event(tasknum, 'error', err);
+            } else {
+                //if have database -- emit
+                if (options.db.database) {
+                    var database = client.db(options.db.database);
+                    this._taskHandle.Event(tasknum, 'database', {database,client});
                 }
-            }
-            if (body) {
-                var result = JSON.parse(body);
-                this._taskHandle.Event(tasknum, 'ready', result);
+                //emit final events
+                this._taskHandle.Event(tasknum, 'client', client);
             }
         });
 
@@ -59,26 +59,28 @@ class CRPC {
     }
 
     register(options) {
-        if (options.request.url &&
-            options.request.method &&
-            options.request.body &&
+        if (options.db.host &&
+            options.db.user &&
+            options.db.password &&
+            options.db.database &&
             (options.events || options.callback)) {
                 this.$(options, options.events, options.callback);
             } else {
-                console.log('Missing params for RPC task.');
+                console.log('Missing params for RPC task. {db:"", user:"", password:""}');
             }
     }
 
     $(options) {
         var onEvents = options.events;
         var events = [];
-        events['ready'] = onEvents.onReady;
+        events['client'] = onEvents.onConnect;
+        events['database'] = onEvents.onDatabase;
         events['error'] = onEvents.onError;
-        var tasknum = this.__http(options,events);
+        var tasknum = this.__connect(options,events);
         if (options.callback) options.callback(tasknum);
     }
 }
 
 module.exports = {
-    CRPC,
+    CMongo,
 };

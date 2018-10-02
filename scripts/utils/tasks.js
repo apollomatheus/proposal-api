@@ -35,12 +35,17 @@ class CTaskHandler {
     pipe(params) {
         try {
             this.Assert(params.tasknum);
+            
+            //default interval
             let interval = params.interval ? params.interval : 100;
             let tasknum = this.$tasks.length;
             
-            if (params.onready) this.EventCallback(params.tasknum, 'ready', params.onready);
-            if (params.onerror) this.EventCallback(params.tasknum, 'error', params.onerror);
+            //add event callbacks
+            for (var n in params.events) {
+                this.EventCallback(params.tasknum, n,  params.events[n]);
+            }
 
+            //add event listenners
             this.$tasks.push({
                 ready: false,
                 i: setInterval(()=>{
