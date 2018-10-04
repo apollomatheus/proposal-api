@@ -74,6 +74,13 @@ class CRPC {
         var events = [];
         events['ready'] = onEvents.onReady;
         events['error'] = onEvents.onError;
+
+        //extra action
+        var onActions = options.actions;
+        for (var n in onActions) {
+            events[n] = onActions[n];
+        }
+
         var tasknum = this.__http(options,events);
         if (options.callback) options.callback(tasknum);
     }

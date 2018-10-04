@@ -5,12 +5,31 @@ const MongoClient    = require('mongodb').MongoClient;
 
 class CMongo {
     constructor(options,callback) {
-        this._tasks = [];
-        this._taskHandle = (options.tasks) ? options.tasks : new CTaskHandler('taskhandler');
-        this.register(options);
+        if (options.database && options.action && options.collection) {
+            if (!callback) return 'Missing callback';
+            this.__$performAction(options,callback);
+        } else {
+            this._tasks = [];
+            this._taskHandle = (options.tasks) ? options.tasks : new CTaskHandler('taskhandler');
+            this.register(options);
+        }
     }
 
 
+    __$performAction(options,callback) {
+        if (options.database && options.action && options.collection && callback) {
+            switch(options.action) {
+                case 'drop':
+                    options.database.dropDatabase(options.collection,(e,dok)=>{
+                        callback(e,dok);
+                    });
+                break;
+
+                default:
+                break;
+            }
+        }
+    }
     //create task in handler
     __$newTask(func,interval) {
         return this._taskHandle.create({
@@ -47,9 +66,13 @@ class CMongo {
             } else {
                 //if have database -- emit
                 if (options.db.database) {
+                    var collection = null;
                     var database = client.db(options.db.database);
-                    this._taskHandle.Event(tasknum, 'database', {database,client});
-                }
+                    if (options.db.collection) {
+                        collection = database.collection(options.db.collection);
+                    }
+                    this._taskHandle.Event(tasknum, 'database', {database,client,collection});
+                }                
                 //emit final events
                 this._taskHandle.Event(tasknum, 'client', client);
             }
@@ -66,7 +89,7 @@ class CMongo {
             (options.events || options.callback)) {
                 this.$(options, options.events, options.callback);
             } else {
-                console.log('Missing params for RPC task. {db:"", user:"", password:""}');
+                console.log('Missing params for MONGO task.');
             }
     }
 
@@ -74,8 +97,16 @@ class CMongo {
         var onEvents = options.events;
         var events = [];
         events['client'] = onEvents.onConnect;
+        events['collection'] = onEvents.onCollection;
         events['database'] = onEvents.onDatabase;
         events['error'] = onEvents.onError;
+
+        //extra action
+        var onActions = options.actions;
+        for (var n in onActions) {
+            events[n] = onActions[n];
+        }
+
         var tasknum = this.__connect(options,events);
         if (options.callback) options.callback(tasknum);
     }

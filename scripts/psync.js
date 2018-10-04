@@ -1,207 +1,168 @@
 'use strict';
 
-const request = require('request');
-const MongoClient    = require('mongodb').MongoClient;
-const config = require('../components/config');
+const Share = require('./share');
+const proposals = [];
 
-var rpc = {
-    user: 'rpc000u1',
-    password: 'rpc000u2',
-    host: 'http://127.0.0.1:51314',
+var board = {
+    proposals: false,
+    error: false,
+    blocks: 0,
+    nextsuperblock: 0,
 };
 
-var proposals = [];
 
-class CTaskHandler {
-    constructor(name,init) {
-        this.name = name;
-        this.$tasks = [];
-        this.result = null;
-        if (init) {
-          this.result = init(this);
+var today = new Date();
+var commonSuperblockInterval = DayTimeSpan(today, DateIncreased(today,(20160*90)));
+
+
+function DateIncreased(date,sec) {
+    date.setTime(((date.getTime()/1000)+sec)*1000);
+    return date;
+ }
+
+// 
+function DayTimeSpan(dateA,dateB) {
+    var days = 0;
+    for (var y = dateA.getFullYear(); y < dateB.getFullYear()+1; y++) {
+        for (var m = dateA.getMonth(); m < dateB.getMonth()+1; m++) {
+            var d = new Date(y, m, 0).getDate(); // days in month
+            var dm = (today.getMonth() == m) ? d-today.getDate() : d;
+            var dmB = (dateB.getMonth() == m) ? dateB.getDate() : dm;
+            days += dmB;
         }
     }
+    return days;
+}
+
+// interval 20160 --
+var superblock = [
+    20160,40320,
+    60480,80640,100800,
+    120960,141120,161280,181440,
+    201600,221760,241920,262080,282240,
+    302400,322560,342720,362880,383040,403200,
+];
+
+var secByDay = (24*60*60);
+
+// get superblocks between two dates
+function CalculateSuperblocksBetween(dateA,dateB) {
+    var blocks = 0;
+    var da = dateA;
+    var db = dateB;
+
+    //get array of blocks between DA and DB
+    while (da.getTime() <= db.getTime()) {
+            blocks += 1;
+            //block interval
+            da = DateIncreased(da,secByDay*commonSuperblockInterval);
+    }
+    return blocks;
+}
+
+// from here we can get the next superblock, but its not exact
+function CalculateNextSupertblock(next,actual) {
+    var diffblock = next - actual;
+    var secs = Math.round(diffblock*90);//90s per block
+    var next = new Date();
     
-    addTask(params,scope) {
-      if (scope) {
-        let interval = params.interval ? params.interval : 100;
-        let tasknum = this.$tasks.length;
-        this.$tasks.push({
-           ready: false,
-           si: setInterval(()=>{
-              var result = scope(this,tasknum);
-              if (result) {
-                 if (result == 'ready') {
-                   this.$tasks[tasknum].ready = true;
-                   clearInterval(this.$tasks[tasknum].si);
-                 } 
-              } 
-           },interval),
-        });
-        return tasknum;
-      }
-    }
+    var nd = new Date(next.setTime(((next.getTime()/1000)+secs)*1000));//forward time
 
-    addTaskListenner(params) {
-        if (params.$tasks) {
-            if (params.$tasks.length > params.tasknum && 
-                params.tasknum >= 0 && params.$tasks.length > 0) {
-                let interval = params.interval ? params.interval : 100;
-                let tasknum = this.$tasks.length;
-                this.$tasks.push({
-                    ready: false,
-                    si: setInterval(()=>{
-                        if (params.$tasks[params.tasknum].ready) {
-                            if (params.onready) params.onready(this);
-                            this.$tasks[tasknum].ready = true;
-                            clearInterval(this.$tasks[tasknum].si);
-                        }
-                        if (params.oncycle) params.oncycle(this);
-                    },interval),
-                });
+    return nd;
+}
+
+// divide payments through specified interval
+function CalculatePayments(start,end,total) {
+    var blocks = CalculateSuperblocksBetween(start,end);
+    if (blocks == 0) {
+        return { unallocated: total, blocks };
+    }
+    var amount = total / blocks;
+    return { amount, blocks };
+}
+
+function CompareDate(da,db) {
+    if (da.getFullYear() <= db.getFullYear()) {
+        //low year
+        if (da.getFullYear() < db.getFullYear()) {
+            return true;
+        }
+        if (da.getMonth() <= db.getMonth()) {
+            //low month
+            if (da.getMonth() < db.getMonth()) {
+                return true;
             }
-        }
-    }
-
-    addTaskResult(tasknum, result) {
-        if (this.$tasks) {
-            if (this.$tasks.length > tasknum && 
-                tasknum >= 0 && this.$tasks.length > 0) {
-                    this.$tasks[tasknum].result = result;
-                }
-        }
-    }
-
-    getTaskResult(tasknum) {
-        if (this.$tasks) {
-            if (this.$tasks.length > tasknum && 
-                tasknum >= 0 && this.$tasks.length > 0) {
-                    return this.$tasks[tasknum].result;
-                }
-        }
-    }
-};
-
-const TaskHandler = new CTaskHandler('taskhandler');
-
-function newTask(func,interval) {
-    return TaskHandler.addTask({
-        interval: interval ? interval: 100,
-    },func);
+            return (da.getDate() <= db.getDate());
+        } 
+    } 
+    return false;
 }
 
-function listenTask(tasknum,onready,oncycle,interval) {
-    TaskHandler.addTaskListenner({
-        tasknum,
-        $tasks: TaskHandler.$tasks,
-        onready: onready ? onready: null,
-        oncycle: oncycle ? oncycle: null,
-        interval: interval ? interval: 100,
-    });
-}
-
-function rpcOptions(method,params) {
-    let options = {
-        url: rpc.host,
-        method: "post",
-        headers:
-        {
-         "content-type": "text/plain"
-        },
-        auth: {
-            user: rpc.user,
-            pass: rpc.password
-        },
-        body: JSON.stringify( {"jsonrpc": "1.0", "id": "curltest", "method": method, "params": params })
-    };
-
-    return options;
-}
-
-function newRequest(options,callback) {
-    try {
-        //listen to request result
-        var tasknum = newTask((self,tasknum)=>{
-            var result = self.getTaskResult(tasknum);
-            if (result) return 'ready';
-        });
-        
-        //listen to task pulse
-        listenTask(tasknum, (self) => {
-            var result = self.getTaskResult(tasknum);
-            callback(result);
-        });
-
-        //listen to request response
-        request(options, (error,response, body) => {
-            if (error) throw error;
-            var result = JSON.parse(body);
-            TaskHandler.addTaskResult(tasknum, result);
-        });
-
-    } catch(err) {
-        console.log('Caught an error!');
-    }
-}
-
-function storeProposal(database) {
-    console.log('Storing proposals! (',proposals.length,')');
-    var c = database.collection('proposals');
-    //add items
-    for (let i = 0; i < proposals.length; i++) {
-        c.insertOne(proposals[i], (err, res)=> {
-            if (err) throw err;
-            console.log('OK!');
-        });
-    }
-}
-
-function saveProposals() {
-    try {
-        MongoClient.connect(config.host, { useNewUrlParser: true }, (err, client) => {
-            if (err) throw err;
-
-            var database = client.db(config.database);
-            console.log('Database connected!');
-            database.collection('proposals',(err,c)=> {
-                c.find().count((err,n) => {
-                    if (n > 0) { //clean collection
-                        database.dropCollection('proposals', function(err, delOK) { 
-                            if (err) throw err;
-                            console.log('Collection cleaned!');
-                            storeProposal(database);
-                            client.close();
-                        });
-                    } else {
-                        storeProposal(database);
-                        client.close();
-                    }
-                });
-            });
-        });
-    } catch(err) {
-        console.log('MongoDB: Failed to connect!');
-    }
-}
-
-function masternodeCount() {
-    return 100;
-}
-
-function organizeProposal(value) {
+function OrganizeProposal(value,masternodes) {
     var ds_ = JSON.parse(value.DataString);
     var ds = ds_[0][1];
-    var mc = masternodeCount();
-    var p = {
+
+    //superblocks
+    var LastDate = new Date(board.lastsuperblock_ts*1000);
+    var NextDate = CalculateNextSupertblock(board.nextsuperblock,board.blocks);
+
+    //proposal
+    var Passing = ((value.AbsoluteYesCount-value.NoCount) > Math.round(masternodes*0.10));
+    var Start = new Date(ds.start_epoch*1000);
+    var End = new Date(ds.end_epoch*1000);
+
+    var Paid = Start < LastDate ? CalculatePayments(Start, LastDate, ds.payment_amount) : 0;
+    var Left = today < End ? CalculatePayments(today, End, ds.payment_amount) : 0;
+
+    var Expired = false;
+    var NotStarted = false;
+
+    if (today.getDate() < Start.getDate() &&
+        today.getMonth() <= Start.getMonth() &&
+        today.getFullYear() <= Start.getFullYear()) {
+            NotStarted = true;
+    }
+
+    if (!NotStarted) {
+        var now = new Date();
+        if (CompareDate(now,End)) {
+            if (CompareDate(NextDate,End)) {
+                Expired = false;
+            } else {
+                Expired = true;
+            }
+        } else {
+            Expired = true;
+        }
+    }
+
+    //estimative to pay, left to pay, amount per month, budget allocation...
+    var estTotalPaid = Paid.amount && Paid.blocks ? Paid.amount * Paid.blocks : 0;
+    var estTotalLeft = Left.amount && Left.blocks ? Left.amount * Left.blocks : 0;
+    var amount = (Paid.amount ? Paid.amount : (Left.amount ? Left.amount : ds.payment_amount));
+    var allocated = 0;
+    var unallocated = 0;
+
+    if (!Expired && !NotStarted) {
+        if (!Passing) {
+            unallocated = amount;
+        } else {
+            allocated = amount;
+        }
+    }
+
+    proposals.push({
         hash: value.Hash,
         name: ds.name,
         url: ds.url,
         address: ds.payment_address,
-        paid: 0,
-        totalPayment: 1,
-        availablePayment: 1,
+        allocated: Expired || NotStarted ? 0 : allocated,
+        unallocated: Expired || NotStarted ? 0 : unallocated,
+        estPaid: Expired || NotStarted ? 0 : estTotalPaid,
+        estPayLeft: Expired || NotStarted ? 0 : estTotalLeft,
         requestPayment: ds.payment_amount,
-        masternodesEnabled: mc,
+        masternodesEnabled: masternodes,
+        passing: Passing,
         voteYes: value.YesCount,
         voteNo: value.NoCount,
         voteAbs: value.AbstainCount,
@@ -209,24 +170,114 @@ function organizeProposal(value) {
         deleted: value.fCachedDelete,
         start: ds.start_epoch,
         end: ds.end_epoch,
-    };
-    return p;
+        expired: Expired,
+        started: NotStarted,
+    });
+    
 }
 
-function getProposals() {
-    
-    console.log('Getting proposals from RPC...');
+function SaveProposal() {
+    var conf = Share.config;
+    conf.collection = 'proposals';
 
-    newRequest(rpcOptions('gobject',['list']), (result) => {
-        console.log('Got result !');
-        var list = result.result;
-        for (var hash in list) {
-            var p = organizeProposal(list[hash]);
-            proposals.push(p);
+    Share.DoMongo(conf, {
+        onDatabase(v,t) {
+            var collection = v.collection ? v.collection : v.database.collection('proposals');
+            t.task.DoEventCallback(t.id,(collection ? 'count':'store'),v,false);
+        },
+        onError(v) {
+            board.error = true;
         }
-        saveProposals();
+    }, {
+        count(v,t) {
+            var collection = v.collection ? v.collection : v.database.collection('proposals');
+            collection.find().count((e,n)=> {
+                if (n > 0) {
+                    console.log('Cleaning...');
+                    Share.DoMongoAction(v.database, 'drop', 'proposals', (e,ok)=>{
+                        t.task.DoEventCallback(t.id,'store',v,false);
+                    });
+                } else {
+                    t.task.DoEventCallback(t.id,'store',v,false);
+                }
+            });
+        },
+        store(v) {
+            console.log('Storing...');
+            var collection = v.collection ? v.collection : v.database.collection('proposals');
+            collection.insertOne({proposals}, (err, res) => {
+                if (err) throw err;
+                console.log('Stored!');
+            });
+            v.client.close();
+        },
     });
 }
 
-//--init
-getProposals();
+function rpc(cmd,params,onReady,extra) {
+    Share.rpc.$(Share, cmd, params, onReady, ()=>{
+        console.log('Failed to get:',cmd);
+        board.error = true;
+    },extra);
+}
+
+function SetGetInfo(callback) {
+    console.log('Reading wallet info...')
+    rpc('getinfo',[],(v)=>{
+        board.blocks = v.result.blocks;
+        callback();
+    });
+}
+
+function SetGovernanceInfo(callback) {
+    console.log('Reading governance info...')
+    rpc('getgovernanceinfo',[],(v)=>{
+        board.lastsuperblock = v.result.lastsuperblock;
+        board.nextsuperblock = v.result.nextsuperblock;
+        callback();
+    });
+}
+
+function SetLastSuperblock(callback) {
+    console.log('Reading last superblock hash...')
+    rpc('getblockhash',[board.lastsuperblock],(v)=>{
+        rpc('getblockheader',[v.result],(vn)=>{
+            board.lastsuperblock_ts = vn.result.time;
+            callback();
+        })
+    });
+}
+
+function SetProposals() {
+    rpc('gobject',['list'],(l,t)=>{
+        SetGetInfo(()=>{
+            SetGovernanceInfo(()=>{
+                SetLastSuperblock(()=>{
+                    if (l.result) t.task.DoEventCallback(t.id,'list',l.result,false);
+                    else console.log('Empty response');
+                    board.proposals = true;
+                })
+            })
+        })
+    },{
+        list(v) {
+            console.log('Parsing proposals...')
+            for (var p in v) {
+                OrganizeProposal(v[p], 10);
+            }
+            console.log('Saving proposals...')
+            SaveProposal();
+        }
+    });
+}
+
+var watch = setInterval(()=>{
+    if (board.proposals || board.error) {
+        console.log(proposals);
+        console.log('All done... exit:',board.error ? 'error':'success');
+        clearInterval(watch);
+    }
+},100);
+
+SetProposals();
+

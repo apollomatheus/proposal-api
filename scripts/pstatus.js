@@ -1,15 +1,6 @@
 'use strict';
 
-const config = require('../components/config');
-const CTaskHandler = require('./utils/tasks').CTaskHandler;
-const CRPC = require('./utils/rpc').CRPC;
-const CMongo    = require('./utils/mongo').CMongo;
-
-var rpc = {
-    user: 'rpczzz',
-    password: 'rpczzz',
-    host: 'http://127.0.0.1:51314',
-};
+const Share = require('./share');
 
 const status = {
     deadline: -1,
@@ -47,75 +38,44 @@ var board = {
     superblock: null
 };
 
-const TaskHandler = new CTaskHandler('taskhandler');
-const Tasks = [];
-
 var today = new Date();
 var commonSuperblockInterval = DayTimeSpan(today, DateIncreased(today,(20160*90)));
-
-function DoRPC(method,params,events,callback) {
-    let options = {
-        url: rpc.host,
-        method: "post",
-        headers:
-        {
-         "content-type": "text/plain"
-        },
-        auth: {
-            user: rpc.user,
-            pass: rpc.password
-        },
-        body: JSON.stringify( {"jsonrpc": "1.0", "id": "curltest", "method": method, "params": params })
-    };
-
-    Tasks.push(new CRPC({
-        request: options,
-        events,
-        tasks: TaskHandler,
-        callback,
-    }));
-}
-
-function DoMongo(db,events) {
-    Tasks.push(new CMongo({
-        db,
-        events
-    }));
-}
-
-function StoreStatus(database) {
-    console.log('~~: Storing status!');
-    var c = database.collection('status');
-    c.insertOne(status, (err, res) => {
-        if (err) throw err;
-        console.log('~~: Stored!');
-    });
-}
 
 function SaveStatus() {
     try {
         console.log('Saving status...');
-        DoMongo(config, {
-            onDatabase(v) {
-                v.database.collection('status',(e,c)=>{
-                    c.find().count((e,n)=>{
-                        if (n > 0) {
-                            v.database.dropCollection('status', function(err, ok) { 
-                                if (err) throw err;
-                                if (ok) {
-                                    console.log('~~: Collection cleaned!');
-                                    StoreStatus(v.database);
-                                }
-                                v.client.close();
-                            });
-                        } else {
-                            console.log('~~: No clean needed!');
-                            StoreStatus(v.database);
-                            v.client.close();
-                        }
-                    })
-                })
-            }
+        
+        var conf = Share.config;
+        conf.collection = 'status';
+
+        Share.DoMongo(conf, {
+            onDatabase(v,t) {
+                var collection = v.collection ? v.collection : v.database.collection('status');
+                t.task.DoEventCallback(t.id,(collection ? 'count':'store'),v,false);
+            } 
+        }, {
+            count(v,t) {
+                var collection = v.collection ? v.collection : v.database.collection('status');
+                collection.find().count((e,n)=> {
+                    if (n > 0) {
+                        console.log('Cleaning...');
+                        Share.DoMongoAction(v.database, 'drop', 'status', (e,ok)=>{
+                            t.task.DoEventCallback(t.id,'store',v,false);
+                        });
+                    } else {
+                        t.task.DoEventCallback(t.id,'store',v,false);
+                    }
+                });
+            },
+            store(v) {
+                console.log('Storing...');
+                var collection = v.collection ? v.collection : v.database.collection('status');
+                collection.insertOne(status, (err, res) => {
+                    if (err) throw err;
+                    console.log('~~: Stored!');
+                });
+                v.client.close();
+            },
         });
     } catch(err) {
         console.log('MongoDB: Failed to connect!');
@@ -224,16 +184,16 @@ function DateStringParse(ds) {
 
 
 //getinfo and governance status
-console.log('~~: Getinfo gathering...');
-DoRPC('getinfo',[],{
+console.log('Getinfo gathering...');
+Share.DoRPC('getinfo',[],{
     onReady(gi) {
         status.blocks = gi.result.blocks;
         if (status.blocks) {
-            console.log('~~: Getinfo OK...');
-            console.log('~~: Governance gathering...');
-            DoRPC('getgovernanceinfo',[],{
+            console.log('Getinfo OK...');
+            console.log('Governance gathering...');
+            Share.DoRPC('getgovernanceinfo',[],{
                 onReady(v) {
-                    console.log('~~: Governance OK...');
+                    console.log('Governance OK...');
                     status.superblock.next = v.result.nextsuperblock;
                     status.superblock.last = v.result.lastsuperblock;
                     CalculateNextSupertblock();
@@ -245,7 +205,7 @@ DoRPC('getinfo',[],{
                     board.superblock = 'error';
                     board.date = 'error';
                 }
-            }) 
+            }); 
         }
     },
     onError(e) {
@@ -256,18 +216,19 @@ DoRPC('getinfo',[],{
 });
 
 //masternode info
-console.log('~~: Masternodes gathering...');
-DoRPC('masternode',['count'],{
+console.log('Masternodes gathering...');
+Share.DoRPC('masternode',['count'],{
     onReady(v) {
         status.masternodes = v.result;
         status.proposal.needVotes = v.result * 0.10;
 
-        console.log('~~: Masternodes OK...');
-        console.log('~~: Proposals gathering...');
+        console.log('Masternodes OK...');
+        console.log('Proposals gathering...');
+        
         //proposals info
-        DoRPC('gobject',['list'],{
+        Share.DoRPC('gobject',['list'],{
             onReady(v) {
-                console.log('~~: Proposals OK...');
+                console.log('Proposals OK...');
                 
                 var proposals = 0;
                 var passing = 0;
@@ -325,7 +286,7 @@ var watch = setInterval(()=>{
         }
         clearInterval(watch);
     }
-    
+
     if (board.date == 'error' || board.budget == 'error' || 
         board.proposal == 'error' || board.superblock == 'error') {
         console.log('Exit with error');

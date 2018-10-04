@@ -35,7 +35,7 @@ class CTaskHandler {
     pipe(params) {
         try {
             this.Assert(params.tasknum);
-            
+
             //default interval
             let interval = params.interval ? params.interval : 100;
             let tasknum = this.$tasks.length;
@@ -74,7 +74,7 @@ class CTaskHandler {
         try {
             this.Assert(tasknum);
             if (this.$tasks[tasknum].eventsCallback[name]) {
-                this.$tasks[tasknum].eventsCallback[name](entry);
+                this.$tasks[tasknum].eventsCallback[name](entry, {task: this, id: tasknum});
             } else throw false;
         } catch (e) {
             if (verbose) console.log('Invalid task event callback ~> ',name);
