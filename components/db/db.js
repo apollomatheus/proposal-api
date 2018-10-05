@@ -1,5 +1,5 @@
 const MongoClient    = require('mongodb').MongoClient;
-const config = require('../config');
+const config = require('../config').config;
 
 const db = {
     tasks: [],
@@ -28,12 +28,12 @@ const db = {
     },
     GetStatus(database,cb) {
         try {
-            var cl = database.collection('status');
+            var cl = database.collection(config.c.status);
             if (cl) {
                 var done = false;
                 var status = {};
 
-                //Register task cycle
+                //Register task callback
                 this.NewTask(this, (self) =>
                 {
                     if (done) {
@@ -41,45 +41,42 @@ const db = {
                     }
                 },cb);
 
-                cl.find().forEach((item)=>{
-                    if(!done) {
-                     status = {
-                       deadline: item.deadline,
-                       date: {
-                           day: item.day,
-                           month: item.month,
-                           year: item.year,
-                       },
-                       masternodes: item.masternodes,
-                       amount: {
-                            available: item.budget.available,
-                            requested: item.budget.requested,
-                            allocated: item.budget.allocated,
-                            unallocated: item.budget.unallocated,
-                       },
-                       proposal : {
-                           passing: item.budget.proposal.passing,
-                           insufficient: item.budget.proposal.insufficient,
-                       }
-                     };
-                     done = true;
+                cl.find().count((err,n)=>{
+                    if (n > 0) {
+                        cl.find().forEach((item)=>{
+                            if(!done) {
+                            status = {
+                            deadline: item.deadline,
+                            date: item.date,
+                            masternodes: item.masternodes,
+                            blocks: item.blocks,
+                            amount: item.budget,
+                            proposal : item.proposal,
+                            superblock: item.superblock,
+                            };
+                            done = true;
+                            }
+                        });
+                    } else {
+                        throw 'Status is empty.';
                     }
                 });
+            }  else {
+                throw 'Status not found.';
             }
         } catch (err) {
             cb({error: err});
         }
     },
     GetProposals(database,cb) {
-
         try {
-            var cl = database.collection('proposals');
+            var cl = database.collection(config.c.proposals);
             if (cl) {
                 cl.find().count((err,n)=>{
                     if (n > 0) {
                         var proposals = [];
 
-                        //Register task cycle
+                        //Register task callback
                         this.NewTask(this, (self) =>
                         {
                             if (n == proposals.length) {
@@ -87,27 +84,33 @@ const db = {
                             }
                         },cb);
 
-                        //Iterate proposals elements
+                        //fill proposals
                         cl.find().forEach((item)=> {
                             if (item) {
                                 proposals.push({
                                     id: proposals.length,
-                                    name: item.name,
-                                    hash: item.hash,
                                     url: item.url,
-                                    amount: {
-                                        payment: { 
-                                            paid: item.paid,
-                                            total: item.totalPayment,
-                                        },
-                                        request: item.requestPayment,
-                                        available: item.availablePayment,
-                                    },
+                                    hash: item.hash,
+                                    name: item.name,
+                                    start: item.start,
+                                    end: item.end,
+                                    address: item.address,
+                                    expired: item.expired,
+                                    started: item.started,
+                                    passing: item.passing,
+                                    payments: item.payments,
                                     masternodes: item.masternodesEnabled,
+                                    amount: {
+                                        paid: item.estPaid,
+                                        left: item.estPayLeft,
+                                        total: item.totalPayment,
+                                        available: item.allocated,
+                                        unavailable: item.unallocated,
+                                    },
                                     votes: {
                                         yes: item.voteYes,
                                         no: item.voteNo,
-                                    }
+                                    },
                                 }); 
                             }
                         });
@@ -115,6 +118,8 @@ const db = {
                         throw 'Proposals empty';
                     }
                 });
+            } else {
+                throw 'Proposals not found.';
             }
         } catch (err) {
             cb({error: err});

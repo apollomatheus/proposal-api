@@ -8,6 +8,7 @@ var board = {
     error: false,
     blocks: 0,
     nextsuperblock: 0,
+    masternodes: 0,
 };
 
 
@@ -18,9 +19,8 @@ var commonSuperblockInterval = DayTimeSpan(today, DateIncreased(today,(20160*90)
 function DateIncreased(date,sec) {
     date.setTime(((date.getTime()/1000)+sec)*1000);
     return date;
- }
+}
 
-// 
 function DayTimeSpan(dateA,dateB) {
     var days = 0;
     for (var y = dateA.getFullYear(); y < dateB.getFullYear()+1; y++) {
@@ -34,14 +34,51 @@ function DayTimeSpan(dateA,dateB) {
     return days;
 }
 
-// interval 20160 --
-var superblock = [
-    20160,40320,
-    60480,80640,100800,
-    120960,141120,161280,181440,
-    201600,221760,241920,262080,282240,
-    302400,322560,342720,362880,383040,403200,
-];
+
+function SaveProposal() {
+    var conf = Share.config;
+    conf.collection = conf.c.proposals;
+
+    Share.DoMongo(conf, {
+        onDatabase(v,t) {
+            var collection = v.collection ? v.collection : v.database.collection(conf.c.proposals);
+            t.task.DoEventCallback(t.id,(collection ? 'count':'store'),v,false);
+        },
+        onError(v) {
+            board.error = true;
+        }
+    }, {
+        count(v,t) {
+            var collection = v.collection ? v.collection : v.database.collection(conf.c.proposals);
+            collection.find().count((e,n)=> {
+                if (n > 0) {
+                    console.log('Cleaning...');
+                    Share.DoMongoAction(v.database, 'drop', conf.c.proposals, (e,ok)=>{
+                        t.task.DoEventCallback(t.id,'store',v,false);
+                    });
+                } else {
+                    t.task.DoEventCallback(t.id,'store',v,false);
+                }
+            });
+        },
+        store(v) {
+            console.log('Storing...');
+            var collection = v.collection ? v.collection : v.database.collection(conf.c.proposals);
+            collection.insertOne({proposals}, (err, res) => {
+                if (err) throw err;
+                console.log('Stored!');
+            });
+            v.client.close();
+        },
+    });
+}
+
+function rpc(cmd,params,onReady,extra) {
+    Share.rpc.$(Share, cmd, params, onReady, ()=>{
+        console.log('Failed to get:',cmd);
+        board.error = true;
+    },extra);
+}
 
 var secByDay = (24*60*60);
 
@@ -75,10 +112,65 @@ function CalculateNextSupertblock(next,actual) {
 function CalculatePayments(start,end,total) {
     var blocks = CalculateSuperblocksBetween(start,end);
     if (blocks == 0) {
-        return { unallocated: total, blocks };
+        return { amount: total, blocks };
     }
     var amount = total / blocks;
     return { amount, blocks };
+}
+
+function ParseTransaction(hex, callback) {
+    rpc('decoderawtransaction',[hex],(v)=>{
+        callback(v.result);
+    });
+}
+
+function CalculetePaidBlocks(address,callback,lowDate,highDate) {
+    var payments = [];
+    var sbi = 20160;
+
+    for (var i = sbi; i < 161280+sbi; i+=sbi) {
+        rpc('getblockhash',[i], (hash) => {
+            rpc('getblock',[hash.result],(block)=> {
+
+                if (lowDate || highDate) {
+                    if (block.result.time < lowDate) {
+                        return;
+                    } 
+                    if (block.result.time > highDate) {
+                        return;
+                    } 
+                }
+
+                var max = 0, count = 0;
+                for (var n in block.result.tx) {
+                    max++;
+                }
+
+                for (var n in block.result.tx) {
+                    rpc('gettransaction',[block.result.tx[n]],(tx)=>{
+                        ParseTransaction(tx.result.hex,(val)=>{
+                            for (var v in val.vout) {
+                                var addr = val.vout[v].scriptPubKey.addresses;
+                                for (var a in addr) {
+                                    if (addr[a] == address) {
+                                        payments.push({amount: val.vout[v].value, block: block.result.height});
+                                        break;
+                                    }
+                                }
+                            }
+                            count++;
+                        });
+                    });
+                }
+
+                //await payments to finish
+                while(count < max) {
+                    //...
+                }
+                callback(payments);
+            });
+        });
+    }
 }
 
 function CompareDate(da,db) {
@@ -98,7 +190,7 @@ function CompareDate(da,db) {
     return false;
 }
 
-function OrganizeProposal(value,masternodes) {
+function OrganizeProposal(value) {
     var ds_ = JSON.parse(value.DataString);
     var ds = ds_[0][1];
 
@@ -107,12 +199,9 @@ function OrganizeProposal(value,masternodes) {
     var NextDate = CalculateNextSupertblock(board.nextsuperblock,board.blocks);
 
     //proposal
-    var Passing = ((value.AbsoluteYesCount-value.NoCount) > Math.round(masternodes*0.10));
+    var Passing = ((value.AbsoluteYesCount-value.NoCount) > Math.round(board.masternodes*0.10));
     var Start = new Date(ds.start_epoch*1000);
     var End = new Date(ds.end_epoch*1000);
-
-    var Paid = Start < LastDate ? CalculatePayments(Start, LastDate, ds.payment_amount) : 0;
-    var Left = today < End ? CalculatePayments(today, End, ds.payment_amount) : 0;
 
     var Expired = false;
     var NotStarted = false;
@@ -137,88 +226,71 @@ function OrganizeProposal(value,masternodes) {
     }
 
     //estimative to pay, left to pay, amount per month, budget allocation...
-    var estTotalPaid = Paid.amount && Paid.blocks ? Paid.amount * Paid.blocks : 0;
-    var estTotalLeft = Left.amount && Left.blocks ? Left.amount * Left.blocks : 0;
-    var amount = (Paid.amount ? Paid.amount : (Left.amount ? Left.amount : ds.payment_amount));
+    var estPaid = Start < LastDate ? CalculatePayments(Start, LastDate, ds.payment_amount) : 0;
+    var estLeft = today < End ? CalculatePayments(today, End, ds.payment_amount) : 0;
+    var estTotalPaid = estPaid.amount && estPaid.blocks ? estPaid.amount * estPaid.blocks : 0;
+    var estTotalLeft = estLeft.amount && estLeft.blocks ? estLeft.amount * estLeft.blocks : 0;
+    var amount = (estLeft.amount ? estLeft.amount : ds.payment_amount);
     var allocated = 0;
     var unallocated = 0;
 
     if (!Expired && !NotStarted) {
         if (!Passing) {
+            if (estTotalPaid >= ds.payment_amount) {
+                estTotalPaid = 0;
+            }
             unallocated = amount;
         } else {
+            if (estTotalPaid >= ds.payment_amount) {
+                estTotalPaid = 0;
+            }
             allocated = amount;
         }
     }
 
-    proposals.push({
-        hash: value.Hash,
-        name: ds.name,
-        url: ds.url,
-        address: ds.payment_address,
-        allocated: Expired || NotStarted ? 0 : allocated,
-        unallocated: Expired || NotStarted ? 0 : unallocated,
-        estPaid: Expired || NotStarted ? 0 : estTotalPaid,
-        estPayLeft: Expired || NotStarted ? 0 : estTotalLeft,
-        requestPayment: ds.payment_amount,
-        masternodesEnabled: masternodes,
-        passing: Passing,
-        voteYes: value.YesCount,
-        voteNo: value.NoCount,
-        voteAbs: value.AbstainCount,
-        funding: value.fCachedFunding,
-        deleted: value.fCachedDelete,
-        start: ds.start_epoch,
-        end: ds.end_epoch,
-        expired: Expired,
-        started: NotStarted,
-    });
+    if (Expired) {
+        estTotalPaid = ds.payment_amount;
+    }
+
+    if (NotStarted) {
+        estTotalLeft = ds.payment_amount;
+    }
+    
+    //calculate actual paid blocks
+    CalculetePaidBlocks(ds.payment_address, (payments) => {
+        proposals.push({
+            hash: value.Hash,
+            name: ds.name,
+            url: ds.url,
+            address: ds.payment_address,
+            allocated: allocated,
+            unallocated: unallocated,
+            estPaid: estTotalPaid,
+            estPayLeft: estTotalLeft,
+            payments,
+            totalPayment: ds.payment_amount,
+            masternodesEnabled: board.masternodes,
+            passing: Passing,
+            voteYes: value.YesCount,
+            voteNo: value.NoCount,
+            voteAbs: value.AbstainCount,
+            funding: value.fCachedFunding,
+            deleted: value.fCachedDelete,
+            start: ds.start_epoch,
+            end: ds.end_epoch,
+            expired: Expired,
+            started: !NotStarted,
+        });
+    })
     
 }
 
-function SaveProposal() {
-    var conf = Share.config;
-    conf.collection = 'proposals';
-
-    Share.DoMongo(conf, {
-        onDatabase(v,t) {
-            var collection = v.collection ? v.collection : v.database.collection('proposals');
-            t.task.DoEventCallback(t.id,(collection ? 'count':'store'),v,false);
-        },
-        onError(v) {
-            board.error = true;
-        }
-    }, {
-        count(v,t) {
-            var collection = v.collection ? v.collection : v.database.collection('proposals');
-            collection.find().count((e,n)=> {
-                if (n > 0) {
-                    console.log('Cleaning...');
-                    Share.DoMongoAction(v.database, 'drop', 'proposals', (e,ok)=>{
-                        t.task.DoEventCallback(t.id,'store',v,false);
-                    });
-                } else {
-                    t.task.DoEventCallback(t.id,'store',v,false);
-                }
-            });
-        },
-        store(v) {
-            console.log('Storing...');
-            var collection = v.collection ? v.collection : v.database.collection('proposals');
-            collection.insertOne({proposals}, (err, res) => {
-                if (err) throw err;
-                console.log('Stored!');
-            });
-            v.client.close();
-        },
+function SetMnCount(callback) {
+    console.log('Reading wallet info...')
+    rpc('masternode',['count'],(v)=>{
+        board.masternodes = v.result;
+        callback();
     });
-}
-
-function rpc(cmd,params,onReady,extra) {
-    Share.rpc.$(Share, cmd, params, onReady, ()=>{
-        console.log('Failed to get:',cmd);
-        board.error = true;
-    },extra);
 }
 
 function SetGetInfo(callback) {
@@ -251,6 +323,7 @@ function SetLastSuperblock(callback) {
 function SetProposals() {
     rpc('gobject',['list'],(l,t)=>{
         SetGetInfo(()=>{
+            SetMnCount(()=>{
             SetGovernanceInfo(()=>{
                 SetLastSuperblock(()=>{
                     if (l.result) t.task.DoEventCallback(t.id,'list',l.result,false);
@@ -259,11 +332,12 @@ function SetProposals() {
                 })
             })
         })
+        })
     },{
         list(v) {
             console.log('Parsing proposals...')
             for (var p in v) {
-                OrganizeProposal(v[p], 10);
+                OrganizeProposal(v[p]);
             }
             console.log('Saving proposals...')
             SaveProposal();
@@ -280,4 +354,3 @@ var watch = setInterval(()=>{
 },100);
 
 SetProposals();
-

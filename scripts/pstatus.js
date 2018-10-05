@@ -32,10 +32,8 @@ const status = {
 };
 
 var board = {
-    date: null,
-    budget: null,
-    proposal: null,
-    superblock: null
+    success: false,
+    error: false,
 };
 
 var today = new Date();
@@ -46,20 +44,20 @@ function SaveStatus() {
         console.log('Saving status...');
         
         var conf = Share.config;
-        conf.collection = 'status';
+        conf.collection = conf.c.status;
 
         Share.DoMongo(conf, {
             onDatabase(v,t) {
-                var collection = v.collection ? v.collection : v.database.collection('status');
+                var collection = v.collection ? v.collection : v.database.collection(conf.c.status);
                 t.task.DoEventCallback(t.id,(collection ? 'count':'store'),v,false);
             } 
         }, {
             count(v,t) {
-                var collection = v.collection ? v.collection : v.database.collection('status');
+                var collection = v.collection ? v.collection : v.database.collection(conf.c.status);
                 collection.find().count((e,n)=> {
                     if (n > 0) {
                         console.log('Cleaning...');
-                        Share.DoMongoAction(v.database, 'drop', 'status', (e,ok)=>{
+                        Share.DoMongoAction(v.database, 'drop', conf.c.status, (e,ok)=>{
                             t.task.DoEventCallback(t.id,'store',v,false);
                         });
                     } else {
@@ -69,7 +67,7 @@ function SaveStatus() {
             },
             store(v) {
                 console.log('Storing...');
-                var collection = v.collection ? v.collection : v.database.collection('status');
+                var collection = v.collection ? v.collection : v.database.collection(conf.c.status);
                 collection.insertOne(status, (err, res) => {
                     if (err) throw err;
                     console.log('~~: Stored!');
@@ -183,112 +181,94 @@ function DateStringParse(ds) {
 }
 
 
-//getinfo and governance status
-console.log('Getinfo gathering...');
-Share.DoRPC('getinfo',[],{
-    onReady(gi) {
-        status.blocks = gi.result.blocks;
-        if (status.blocks) {
-            console.log('Getinfo OK...');
-            console.log('Governance gathering...');
-            Share.DoRPC('getgovernanceinfo',[],{
-                onReady(v) {
-                    console.log('Governance OK...');
-                    status.superblock.next = v.result.nextsuperblock;
-                    status.superblock.last = v.result.lastsuperblock;
-                    CalculateNextSupertblock();
-                    board.superblock = 'ok';
-                    board.date = 'ok';
-                },
-                onError(e) {
-                    console.log('Got error for governance info!');
-                    board.superblock = 'error';
-                    board.date = 'error';
-                }
-            }); 
-        }
-    },
-    onError(e) {
-        console.log('Failed to get wallet info.');
-        board.superblock = 'error';
-        board.date = 'error';
-    }
-});
+function rpc(cmd,params,onReady,extra) {
+    Share.rpc.$(Share, cmd, params, onReady, ()=>{
+        console.log('Failed to get: ',cmd);
+        board.error = true;
+    },extra);
+}
 
-//masternode info
-console.log('Masternodes gathering...');
-Share.DoRPC('masternode',['count'],{
-    onReady(v) {
+function SetGetInfo(callback) {
+    rpc('getinfo',[],(v)=>{
+        status.blocks = v.result.blocks;
+        callback();
+    });
+}
+
+function SetGovInfo(callback) {
+    rpc('getgovernanceinfo',[],(v)=>{
+        status.superblock.next = v.result.nextsuperblock;
+        status.superblock.last = v.result.lastsuperblock;
+        callback();
+    });
+}
+
+function SetMnCount(callback) {
+    rpc('masternode',['count'],(v)=>{
         status.masternodes = v.result;
         status.proposal.needVotes = v.result * 0.10;
+        callback();
+    });
+}
 
-        console.log('Masternodes OK...');
-        console.log('Proposals gathering...');
+function SetProposals(proposal) {
+    var proposals = 0;
+    var passing = 0;
+    var insufficient = 0;
+    var requested = 0;
+
+    //calculate proposal info
+    for (var x in proposal) {
+        var p   = proposal[x];
+        var yes = p.YesCount;
+        var no  = p.NoCount;
+        var ds = DateStringParse(JSON.parse(p.DataString));
+        var pass = (yes-no >= status.proposal.needVotes);
+
+        if (pass) passing++;
+        else insufficient++;
+
+        CalculatePaymentPerMonth(
+            ds['start_epoch'],
+            ds['end_epoch'],
+            ds['payment_amount'], pass);
         
-        //proposals info
-        Share.DoRPC('gobject',['list'],{
-            onReady(v) {
-                console.log('Proposals OK...');
-                
-                var proposals = 0;
-                var passing = 0;
-                var insufficient = 0;
-                var requested = 0;
-
-                //calculate proposal info
-                for (var x in v.result) {
-                    var p   = v.result[x];
-                    var yes = p.YesCount;
-                    var no  = p.NoCount;
-                    var ds = DateStringParse(JSON.parse(p.DataString));
-                    var pass = (yes-no >= status.proposal.needVotes);
-
-                    if (pass) passing++;
-                    else insufficient++;
-
-                    CalculatePaymentPerMonth(
-                        ds['start_epoch'],
-                        ds['end_epoch'],
-                        ds['payment_amount'], pass);
-                    
-                    proposals++;
-                }
-                
-                status.budget.requested = requested;
-
-                status.proposal.total = proposals;
-                status.proposal.passing = passing;
-                status.proposal.insufficient = insufficient;
-
-                board.proposal = 'ok';
-                board.budget = 'ok';
-            },
-            onError(e) {
-                console.log('Got error for proposals info!');
-                board.proposal = 'error';
-                board.budget = 'error';
-            }
-        });
-    },
-    onError(e) {
-        console.log('Got error for masternode info!');
-        board.proposal = 'error';
-        board.budget = 'error';
+        proposals++;
     }
-});
+    
+    status.budget.requested = requested;
 
+    status.proposal.total = proposals;
+    status.proposal.passing = passing;
+    status.proposal.insufficient = insufficient;
+
+    board.success = true;
+}
+
+function GetProposals() {
+    rpc('gobject',['list'],(p)=>{
+        SetGetInfo(()=>{
+            SetGovInfo(()=>{
+                SetMnCount(()=>{
+                    CalculateNextSupertblock();
+                    SetProposals(p.result);
+                });
+            });
+        });
+    });
+}
+
+//getinfo and governance status
+console.log('Getinfo gathering...');
+GetProposals();
 
 var watch = setInterval(()=>{
-    if (board.date && board.budget && board.proposal && board.superblock) {
-        if (board.date == 'ok' && board.budget == 'ok' && 
-            board.proposal == 'ok' && board.superblock == 'ok') {
-            SaveStatus();
-        }
+    if (board.success) {
+        SaveStatus();
         clearInterval(watch);
     }
 
-    if (board.date == 'error' || board.budget == 'error' || 
-        board.proposal == 'error' || board.superblock == 'error') {
+    if (board.error) {
         console.log('Exit with error');
         clearInterval(watch);
     }

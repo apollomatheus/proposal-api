@@ -1,15 +1,13 @@
 'use strict';
 
-const config = require('../components/config');
+const config_ = require('../components/config');
 const CTaskHandler = require('./utils/tasks').CTaskHandler;
 const CRPC = require('./utils/rpc').CRPC;
 const CMongo    = require('./utils/mongo').CMongo;
 
-var rpc = {
-    user: 'rpczzz',
-    password: 'rpczzz',
-    host: 'http://127.0.0.1:51314',
-};
+const config = config_.config;
+const rpc = config_.rpc;
+
 
 const TaskHandler = new CTaskHandler('taskhandler');
 const Tasks = [];
@@ -28,7 +26,7 @@ const Share = {
                 user: rpc.user,
                 pass: rpc.password
             },
-            body: JSON.stringify( {"jsonrpc": "1.0", "id": "curltest", "method": method, "params": params })
+            body: JSON.stringify( {"jsonrpc": "1.0", "id": "curlrpc", "method": method, "params": params })
         };
     
         Tasks.push(new CRPC({
@@ -51,7 +49,7 @@ const Share = {
             database:db,
             action,
             collection
-        },callback))
+        },callback));
     },
     rpc: {
         $(self,name,params,onReady,onError,onExtra) {
@@ -70,6 +68,9 @@ const Share = {
         getgovernanceinfo(self,params,onReady,onError,onExtra) {
             self.DoRPC('getgovernanceinfo',params,{onReady, onError},onExtra);
         },
+        getblock(self,params,onReady,onError,onExtra) {
+            self.DoRPC('getblock',params,{onReady, onError},onExtra);
+        },
         getblockhash(self,params,onReady,onError,onExtra) {
             self.DoRPC('getblockhash',params,{onReady, onError},onExtra);
         },
@@ -78,8 +79,16 @@ const Share = {
         },
         gobject(self,params,onReady,onError,onExtra) {
             self.DoRPC('gobject',params,{onReady, onError},onExtra);
-        }
-
+        },
+        masternode(self,params,onReady,onError,onExtra) {
+            self.DoRPC('masternode',params,{onReady, onError},onExtra);
+        },
+        decoderawtransaction(self,params,onReady,onError,onExtra) {
+            self.DoRPC('decoderawtransaction',params,{onReady, onError},onExtra);
+        },
+        gettransaction(self,params,onReady,onError,onExtra) {
+            self.DoRPC('gettransaction',params,{onReady, onError},onExtra);
+        },
     }
 }
 
