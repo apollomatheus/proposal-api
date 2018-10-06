@@ -11,6 +11,14 @@ var board = {
     masternodes: 0,
 };
 
+var setup = {
+    networks: [
+        {start: 20160, interval: 20160, alias: 'mainnet'},
+        {start: 1000, interval: 100, alias: 'testnet'},
+    ],
+    default: 0,
+};
+
 
 var today = new Date();
 var commonSuperblockInterval = DayTimeSpan(today, DateIncreased(today,(20160*90)));
@@ -126,9 +134,9 @@ function ParseTransaction(hex, callback) {
 
 function CalculetePaidBlocks(address,callback,lowDate,highDate) {
     var payments = [];
-    var sbi = 20160;
+    var netw = setup.networks[setup.default];
 
-    for (var i = sbi; i < 161280+sbi; i+=sbi) {
+    for (var i = netw.start; i < board.blocks; i+=sbi) {
         rpc('getblockhash',[i], (hash) => {
             rpc('getblock',[hash.result],(block)=> {
 
@@ -258,6 +266,7 @@ function OrganizeProposal(value) {
     
     //calculate actual paid blocks
     CalculetePaidBlocks(ds.payment_address, (payments) => {
+        console.log(payments);
         proposals.push({
             hash: value.Hash,
             name: ds.name,
@@ -322,16 +331,17 @@ function SetLastSuperblock(callback) {
 
 function SetProposals() {
     rpc('gobject',['list'],(l,t)=>{
+        console.log(l);
         SetGetInfo(()=>{
             SetMnCount(()=>{
-            SetGovernanceInfo(()=>{
-                SetLastSuperblock(()=>{
-                    if (l.result) t.task.DoEventCallback(t.id,'list',l.result,false);
-                    else console.log('Empty response');
-                    board.proposals = true;
+                SetGovernanceInfo(()=>{
+                    SetLastSuperblock(()=>{
+                        if (l.result) t.task.DoEventCallback(t.id,'list',l.result,false);
+                        else console.log('Empty response');
+                        board.proposals = true;
+                    })
                 })
             })
-        })
         })
     },{
         list(v) {
